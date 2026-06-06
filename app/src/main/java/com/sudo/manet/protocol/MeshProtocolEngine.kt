@@ -31,9 +31,10 @@ class MeshProtocolEngine(
     private val sendPacket: (toNeighbor: NodeId, packet: Packet) -> Unit,
     private val getNeighbors: () -> List<NodeId>,
     private val maxGossipFanout: Int = 7,
-    private val defaultTtl: Int = 8
+    private val defaultTtl: Int = 8,
+    private val nodeId: NodeId? = null   // injectable for tests
 ) {
-    private val localId: NodeId = NodeIdentity.localNodeId
+    private val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
     private val packetCache = PacketCache(maxSize = 200)
     private val routingTable = mutableMapOf<NodeId, RouteEntry>()
     private val pendingMessages = mutableMapOf<String, Packet>()
@@ -136,8 +137,14 @@ class MeshProtocolEngine(
             val route = routingTable[packet.destId]
             if (route != null && !route.isExpired()) {
                 transmit(route.nextHop, packet.withTtl(packet.ttl - 1).withHop())
+            } else {
+                // No route in table — check if destination is a direct neighbor
+                val neighbors = getNeighbors()
+                if (neighbors.contains(packet.destId)) {
+                    transmit(packet.destId, packet.withTtl(packet.ttl - 1).withHop())
+                }
+                // Otherwise drop — sender will timeout
             }
-            // If no route, packet is dropped — sender will timeout
         }
     }
 
@@ -180,8 +187,17 @@ class MeshProtocolEngine(
                 .forEach { pending -> transmit(fromNeighbor, pending) }
         } else {
             // Relay RREP back toward the original requester
+            // Also store forward route: the requester is reachable via the direction
+            // we're relaying toward (back through reversePath)
             val prev = reversePath[packet.payload]
-            if (prev != null) transmit(prev, packet.withTtl(packet.ttl - 1))
+            if (prev != null) {
+                // B learns: packet.destId (original sender A) is reachable via prev
+                routingTable[packet.destId] = RouteEntry(
+                    nextHop = prev,
+                    hopCount = packet.hopCount + 1
+                )
+                transmit(prev, packet.withTtl(packet.ttl - 1))
+            }
         }
     }
 
