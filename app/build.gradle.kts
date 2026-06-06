@@ -1,15 +1,13 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp") version "2.2.10-2.0.2"
 }
 
 android {
     namespace = "com.sudo.manet"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.sudo.manet"
@@ -23,21 +21,38 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            isMinifyEnabled = false
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        // Make sure this matches the version string above perfectly
+        jvmTarget = "17"
     }
     buildFeatures {
         compose = true
     }
+
+    sourceSets {
+        getByName("main") {
+            // This explicitly tells the build engine to merge both directories into the compiled DEX path
+            java.srcDirs("src/main/java", "src/main/kotlin")
+        }
+    }
+
 }
 
 dependencies {
+    // ---- 2. Modern AGP 9 & KSP Compatible Room Database Layer ----
+    implementation("androidx.room:room-runtime:2.7.0-alpha11")
+    implementation("androidx.room:room-ktx:2.7.0-alpha11")
+    // Swapped "kapt" out for "ksp" to completely prevent the configuration crash
+    ksp("androidx.room:room-compiler:2.7.0-alpha11")
+
+    // ---- Native Dependencies Setup ----
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -47,6 +62,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("androidx.lifecycle:lifecycle-service:2.8.1")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
