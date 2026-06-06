@@ -2,9 +2,15 @@ package com.sudo.manet.protocol
 
 import com.sudo.manet.storage.NodeIdentity
 import com.sudo.manet.storage.PacketCache
+import com.sudo.manet.storage.db.PacketCacheDao
+import com.sudo.manet.storage.db.RouteDao
+import com.sudo.manet.storage.db.RouteEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 // Events the engine emits upward to the UI
 sealed class EngineEvent {
@@ -32,14 +38,32 @@ class MeshProtocolEngine(
     private val getNeighbors: () -> List<NodeId>,
     private val maxGossipFanout: Int = 7,
     private val defaultTtl: Int = 8,
-    private val nodeId: NodeId? = null   // injectable for tests
+    private val nodeId: NodeId? = null,   // injectable for tests
+    private val packetCacheDao: PacketCacheDao? = null,
+    private val routeDao: RouteDao? = null
 ) {
-
     private val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
-    private val TAG = "MeshEngine[${localId}]"
-    private val packetCache = PacketCache(maxSize = 200)
+    private val packetCache = PacketCache(maxSize = 200, dao = packetCacheDao)
     private val routingTable = mutableMapOf<NodeId, RouteEntry>()
     private val pendingMessages = mutableMapOf<String, Packet>()
+    private val scope = CoroutineScope(Dispatchers.IO)
+
+    init {
+        routeDao?.let { dao ->
+            scope.launch {
+                dao.getAll().forEach { entity ->
+                    val entry = RouteEntry(entity.nextHop, entity.hopCount, entity.createdAt)
+                    if (!entry.isExpired()) {
+                        synchronized(routingTable) {
+                            routingTable[entity.destId] = entry
+                        }
+                    } else {
+                        dao.delete(entity)
+                    }
+                }
+            }
+        }
+    }
 
     // Reverse path table for AODV — needed to route RREP back to requester
     private val reversePath = mutableMapOf<String, NodeId>()
@@ -54,7 +78,6 @@ class MeshProtocolEngine(
     var totalTransmissions = 0; private set
     var totalHops = 0;      private set
 
-    private fun log(msg: String) = println("🔵 MeshEngine[$localId] $msg")
     // ── Public API ───────────────────────────────────────────────────────────
 
     // Called by UI to send a broadcast emergency message
@@ -81,7 +104,7 @@ class MeshProtocolEngine(
         )
         pendingMessages[packet.packetId] = packet
 
-        val route = routingTable[destId]
+        val route = synchronized(routingTable) { routingTable[destId] }
         if (route != null && !route.isExpired()) {
             // Route exists — send directly
             transmit(route.nextHop, packet)
@@ -101,8 +124,6 @@ class MeshProtocolEngine(
             _events.value = EngineEvent.DuplicateDropped(packet.packetId)
             return
         }
-
-        log("📦 ${packet.type} from=$fromNeighbor ttl=${packet.ttl} payload='${packet.payload}'")
 
         // ── Step 2: TTL check ────────────────────────────────────────────────
         if (packet.ttl <= 0) {
@@ -139,7 +160,7 @@ class MeshProtocolEngine(
             sendAck(packet, fromNeighbor)
         } else {
             // We are a relay — forward if we have a route
-            val route = routingTable[packet.destId]
+            val route = synchronized(routingTable) { routingTable[packet.destId] }
             if (route != null && !route.isExpired()) {
                 transmit(route.nextHop, packet.withTtl(packet.ttl - 1).withHop())
             } else {
@@ -179,10 +200,18 @@ class MeshProtocolEngine(
 
     private fun handleRrep(packet: Packet, fromNeighbor: NodeId) {
         // Learn the route: destination is reachable via fromNeighbor
-        routingTable[packet.senderId] = RouteEntry(
+        val entry = RouteEntry(
             nextHop = fromNeighbor,
             hopCount = packet.hopCount
         )
+        synchronized(routingTable) {
+            routingTable[packet.senderId] = entry
+        }
+        routeDao?.let { dao ->
+            scope.launch {
+                dao.insert(RouteEntity(packet.senderId, entry.nextHop, entry.hopCount, entry.createdAt))
+            }
+        }
         _events.value = EngineEvent.RouteFound(packet.senderId, fromNeighbor)
 
         if (packet.destId == localId) {
@@ -197,10 +226,18 @@ class MeshProtocolEngine(
             val prev = reversePath[packet.payload]
             if (prev != null) {
                 // B learns: packet.destId (original sender A) is reachable via prev
-                routingTable[packet.destId] = RouteEntry(
+                val forwardEntry = RouteEntry(
                     nextHop = prev,
                     hopCount = packet.hopCount + 1
                 )
+                synchronized(routingTable) {
+                    routingTable[packet.destId] = forwardEntry
+                }
+                routeDao?.let { dao ->
+                    scope.launch {
+                        dao.insert(RouteEntity(packet.destId, forwardEntry.nextHop, forwardEntry.hopCount, forwardEntry.createdAt))
+                    }
+                }
                 transmit(prev, packet.withTtl(packet.ttl - 1))
             }
         }
@@ -249,18 +286,24 @@ class MeshProtocolEngine(
 
     private fun transmit(toNeighbor: NodeId, packet: Packet) {
         totalTransmissions++
-        log("📤 sending ${packet.type} to=$toNeighbor ttl=${packet.ttl}")
         sendPacket(toNeighbor, packet)
     }
 
     // Called when a neighbor disappears — invalidate stale routes
     fun onNeighborLost(neighborId: NodeId) {
-        val staleDests = routingTable
-            .filter { it.value.nextHop == neighborId }
-            .keys
-        staleDests.forEach { dest ->
-            routingTable.remove(dest)
-            _events.value = EngineEvent.RouteFailed(dest)
+        synchronized(routingTable) {
+            val staleDests = routingTable
+                .filter { it.value.nextHop == neighborId }
+                .keys
+            staleDests.forEach { dest ->
+                routingTable.remove(dest)
+                routeDao?.let { dao ->
+                    scope.launch {
+                        dao.delete(RouteEntity(dest, neighborId, 0, 0)) // hopCount/createdAt don't matter for delete by PK
+                    }
+                }
+                _events.value = EngineEvent.RouteFailed(dest)
+            }
         }
     }
 
