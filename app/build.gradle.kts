@@ -1,8 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.android")
-    id("com.google.devtools.ksp") version "2.2.10-2.0.2"
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -28,19 +27,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        // Make sure this matches the version string above perfectly
-        jvmTarget = "17"
-    }
+
     buildFeatures {
         compose = true
-    }
-
-    sourceSets {
-        getByName("main") {
-            // This explicitly tells the build engine to merge both directories into the compiled DEX path
-            java.srcDirs("src/main/java", "src/main/kotlin")
-        }
     }
 
 }
