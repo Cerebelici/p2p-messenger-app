@@ -34,7 +34,9 @@ class MeshProtocolEngine(
     private val defaultTtl: Int = 8,
     private val nodeId: NodeId? = null   // injectable for tests
 ) {
+
     private val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
+    private val TAG = "MeshEngine[${localId}]"
     private val packetCache = PacketCache(maxSize = 200)
     private val routingTable = mutableMapOf<NodeId, RouteEntry>()
     private val pendingMessages = mutableMapOf<String, Packet>()
@@ -52,6 +54,7 @@ class MeshProtocolEngine(
     var totalTransmissions = 0; private set
     var totalHops = 0;      private set
 
+    private fun log(msg: String) = println("🔵 MeshEngine[$localId] $msg")
     // ── Public API ───────────────────────────────────────────────────────────
 
     // Called by UI to send a broadcast emergency message
@@ -98,6 +101,8 @@ class MeshProtocolEngine(
             _events.value = EngineEvent.DuplicateDropped(packet.packetId)
             return
         }
+
+        log("📦 ${packet.type} from=$fromNeighbor ttl=${packet.ttl} payload='${packet.payload}'")
 
         // ── Step 2: TTL check ────────────────────────────────────────────────
         if (packet.ttl <= 0) {
@@ -244,6 +249,7 @@ class MeshProtocolEngine(
 
     private fun transmit(toNeighbor: NodeId, packet: Packet) {
         totalTransmissions++
+        log("📤 sending ${packet.type} to=$toNeighbor ttl=${packet.ttl}")
         sendPacket(toNeighbor, packet)
     }
 
