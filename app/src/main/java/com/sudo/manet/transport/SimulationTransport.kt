@@ -62,6 +62,8 @@ class SimulationTransport {
         topology.remove(nodeId)
     }
 
+    fun getTopology(): Map<NodeId, Set<NodeId>> = topology.toMap()
+
     fun getNodeCount() = nodes.size
     fun getNode(nodeId: NodeId) = nodes[nodeId]
 }

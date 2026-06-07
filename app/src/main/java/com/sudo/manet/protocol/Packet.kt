@@ -12,7 +12,8 @@ data class Packet(
     val ttl: Int,
     val payload: String = "",
     val status: DeliveryState = DeliveryState.PENDING,
-    val hopCount: Int = 0
+    val hopCount: Int = 0,
+    val sequenceNumber: Int = 0
 ) {
     fun withTtl(newTtl: Int) = copy(ttl = newTtl)
     fun withStatus(newStatus: DeliveryState) = copy(status = newStatus)
