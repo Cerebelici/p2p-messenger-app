@@ -46,7 +46,7 @@ class PersistentStorageTest {
     @Test
     fun `engine restores routes from dao`() = runBlocking {
         val routeDao = FakeRouteDao()
-        routeDao.insert(RouteEntity("DEST_Z", "HOP_B", 2, System.currentTimeMillis()))
+        routeDao.insert(RouteEntity("DEST_Z", "HOP_B", 2, 1, System.currentTimeMillis()))
 
         val engine = MeshProtocolEngine(
             sendPacket = { _, _ -> },

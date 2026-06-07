@@ -19,6 +19,7 @@ data class RouteEntity(
     @PrimaryKey val destId: String,
     val nextHop: String,
     val hopCount: Int,
+    val sequenceNumber: Int,
     val createdAt: Long
 )
 

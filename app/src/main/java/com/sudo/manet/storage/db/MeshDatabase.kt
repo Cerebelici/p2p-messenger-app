@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [NodeEntity::class, PacketCacheEntity::class, RouteEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class MeshDatabase : RoomDatabase() {
@@ -25,7 +25,9 @@ abstract class MeshDatabase : RoomDatabase() {
                     context.applicationContext,
                     MeshDatabase::class.java,
                     "mesh_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration(true)
+                    .build()
                 INSTANCE = instance
                 instance
             }
