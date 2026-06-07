@@ -18,11 +18,13 @@ import com.sudo.manet.service.MeshService
 import com.sudo.manet.storage.NodeIdentity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Current user's SHA-256 ID
-    val myNodeId = NodeIdentity.localNodeId
+    private val _myNodeId = MutableStateFlow(NodeIdentity.localNodeId)
+    val myNodeId: StateFlow<String> = _myNodeId
 
     private var meshService: MeshService? = null
     private var isBound = false
@@ -44,6 +46,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val intent = Intent(application, MeshService::class.java)
         application.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        
+        // Keep our local ID in sync with the global identity
+        viewModelScope.launch {
+            NodeIdentity.nodeIdFlow.collect {
+                _myNodeId.value = it
+            }
+        }
     }
 
     override fun onCleared() {
@@ -66,30 +75,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _connectionStatus.value = it
             }
         }
+
+        // Combine topology and blocked nodes to create a reactive peers list
+        viewModelScope.launch {
+            combine(engine.topology, engine.blockedNodes, myNodeId) { topoMap, blocked, currentId ->
+                topoMap.map { (nodeId, neighbors) ->
+                    Peer(
+                        nodeId = nodeId,
+                        isDirectNeighbor = engine.getNeighbors().contains(nodeId),
+                        isBlocked = blocked.contains(nodeId),
+                        connections = neighbors.toList()
+                    )
+                }.filter { it.nodeId != currentId }
+            }.collect { newPeers ->
+                updatePeers(newPeers)
+            }
+        }
+        
         viewModelScope.launch {
             engine.events.collect { event ->
                 when (event) {
                     is EngineEvent.MessageReceived -> {
                         addReceivedPacket(event.packet.toUI())
+                        addLog("Received ${event.packet.type} from ${event.packet.senderId.take(4)}")
                     }
                     is EngineEvent.AckReceived -> {
                         updateMessageStatus(event.packetId, MessageStatus.DELIVERED)
+                        addLog("Ack received for ${event.packetId.take(4)}")
+                    }
+                    is EngineEvent.PacketRelayed -> {
+                        addLog("Relaying ${event.type} to mesh")
+                    }
+                    is EngineEvent.PacketDropped -> {
+                        addLog("Dropped packet from ${event.from.take(4)} ($event.reason)")
                     }
                     else -> {}
                 }
-            }
-        }
-
-        viewModelScope.launch {
-            engine.topology.collect { topoMap ->
-                val newPeers = topoMap.map { (nodeId, neighbors) ->
-                    Peer(
-                        nodeId = nodeId,
-                        isDirectNeighbor = engine.getNeighbors().contains(nodeId),
-                        connections = neighbors.toList()
-                    )
-                }
-                updatePeers(newPeers)
             }
         }
     }
@@ -100,12 +121,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _peers = MutableStateFlow<List<Peer>>(emptyList())
     val peers: StateFlow<List<Peer>> = _peers
 
+    private val _networkLogs = MutableStateFlow<List<String>>(emptyList())
+    val networkLogs: StateFlow<List<String>> = _networkLogs
+
     fun sendBroadcast(text: String) {
         val packet = MeshPacket(
-            senderId = myNodeId,
+            senderId = myNodeId.value,
             destId = NetworkConstants.BROADCAST_DEST,
             payload = text,
-            status = MessageStatus.PENDING
+            status = MessageStatus.SENT
         )
         _messages.value += packet
         meshService?.engine?.sendGossip(text)
@@ -113,7 +137,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendDirectMessage(destId: String, text: String) {
         val packet = MeshPacket(
-            senderId = myNodeId,
+            senderId = myNodeId.value,
             destId = destId,
             payload = text,
             status = MessageStatus.PENDING
@@ -136,6 +160,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun regenerateIdentity(context: Context) {
         NodeIdentity.regenerate(context)
+        // Restart the service so the engine picks up the new ID
+        context.stopService(Intent(context, MeshService::class.java))
+        context.startService(Intent(context, MeshService::class.java))
+    }
+
+    fun resetMesh() {
+        meshService?.resetMesh()
+    }
+
+    fun toggleBlockNode(nodeId: String) {
+        meshService?.engine?.toggleBlockNode(nodeId)
     }
     
     // Helper for background layer to inject updates
@@ -145,6 +180,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     
     fun addReceivedPacket(packet: MeshPacket) {
         _messages.value += packet
+    }
+
+    private fun addLog(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val newLog = "[$timestamp] $message"
+        _networkLogs.value = (listOf(newLog) + _networkLogs.value).take(15)
     }
 
     private fun updateMessageStatus(packetId: String, status: MessageStatus) {
@@ -162,6 +203,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         status = when (this.status) {
             com.sudo.manet.protocol.DeliveryState.DELIVERED -> MessageStatus.DELIVERED
             else -> MessageStatus.PENDING
-        }
+        },
+        hopCount = this.hopCount,
+        path = this.path
     )
 }

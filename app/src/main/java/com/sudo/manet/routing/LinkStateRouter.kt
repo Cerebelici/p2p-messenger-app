@@ -58,6 +58,12 @@ class LinkStateRouter(
         broadcastLocalLinkState()
     }
 
+    fun clearTopology() {
+        topology.clear()
+        lsaSequences.clear()
+        _topologyFlow.value = emptyMap()
+    }
+
     /**
      * Periodically or on change, broadcast who our current neighbors are.
      * The payload is a comma-separated list of neighbor IDs.
@@ -109,7 +115,7 @@ class LinkStateRouter(
         
         val nextHop = calculateNextHop(packet.destId)
         if (nextHop != null && packet.ttl > 1) {
-            transmit(nextHop, packet.withTtl(packet.ttl - 1).withHop())
+            transmit(nextHop, packet.withTtl(packet.ttl - 1))
             return true
         }
         return false

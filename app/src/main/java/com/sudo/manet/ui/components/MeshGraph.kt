@@ -33,20 +33,6 @@ fun MeshGraph(peers: List<Peer>) {
         val center = Offset(size.width / 2, size.height / 2)
         val radius = size.minDimension / 3
 
-        // Draw local node (Center)
-        drawCircle(
-            color = primaryColor,
-            radius = 20.dp.toPx(),
-            center = center
-        )
-        
-        drawText(
-            textMeasurer = textMeasurer,
-            text = "YOU",
-            topLeft = center.copy(x = center.x - 12.dp.toPx(), y = center.y - 8.dp.toPx()),
-            style = TextStyle(color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-        )
-
         // Calculate positions for peers
         val peerPositions = mutableMapOf<String, Offset>()
         peers.forEachIndexed { index, peer ->
@@ -60,16 +46,6 @@ fun MeshGraph(peers: List<Peer>) {
         peers.forEach { peer ->
             val startPos = peerPositions[peer.nodeId] ?: return@forEach
             
-            // Link to local node if direct neighbor
-            if (peer.isDirectNeighbor) {
-                drawLine(
-                    color = primaryColor.copy(alpha = 0.5f),
-                    start = center,
-                    end = startPos,
-                    strokeWidth = 2.dp.toPx()
-                )
-            }
-
             // Links between peers
             peer.connections.forEach { connectedId ->
                 peerPositions[connectedId]?.let { endPos ->

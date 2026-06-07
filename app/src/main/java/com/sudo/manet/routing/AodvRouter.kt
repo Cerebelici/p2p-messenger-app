@@ -105,7 +105,7 @@ class AodvRouter(
         } else {
             val route = routingTable[packet.destId]
             if (route != null && !route.isExpired() && !route.isInvalid) {
-                transmit(route.nextHop, packet.withTtl(packet.ttl - 1).withHop())
+                transmit(route.nextHop, packet.withTtl(packet.ttl - 1))
             } else {
                 // If no route, we could start discovery, but usually the source does it.
                 // For now, just drop and maybe send RERR back.
@@ -142,7 +142,7 @@ class AodvRouter(
         } else {
             // Relay RREQ
             if (packet.ttl > 0) {
-                val relayed = packet.withTtl(packet.ttl - 1).withHop()
+                val relayed = packet.withTtl(packet.ttl - 1)
                 getNeighbors().filter { it != fromNeighbor }.forEach { neighbor ->
                     transmit(neighbor, relayed)
                 }
@@ -171,7 +171,7 @@ class AodvRouter(
             // Relay RREP back along reverse path
             val prevHop = reversePath[packet.payload]
             if (prevHop != null && packet.ttl > 0) {
-                val relayed = packet.withTtl(packet.ttl - 1).withHop()
+                val relayed = packet.withTtl(packet.ttl - 1)
                 transmit(prevHop, relayed)
             }
         }

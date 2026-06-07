@@ -16,6 +16,7 @@ import com.sudo.manet.ui.viewmodels.MainViewModel
 @Composable
 fun BroadcastScreen(viewModel: MainViewModel) {
     val messages by viewModel.messages.collectAsState()
+    val myNodeId by viewModel.myNodeId.collectAsState()
     val broadcastMessages = messages.filter { it.destId == NetworkConstants.BROADCAST_DEST }
     var textState by remember { mutableStateOf("") }
 
@@ -30,7 +31,7 @@ fun BroadcastScreen(viewModel: MainViewModel) {
             items(broadcastMessages) { message ->
                 MessageBubble(
                     packet = message,
-                    isFromMe = message.senderId == viewModel.myNodeId
+                    isFromMe = message.senderId == myNodeId
                 )
             }
         }

@@ -42,13 +42,22 @@ fun MessageBubble(packet: MeshPacket, isFromMe: Boolean) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "TTL: ${packet.ttl}",
+                        text = "Hops: ${packet.hopCount}",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(end = 4.dp)
                     )
                     if (isFromMe) {
                         StatusIcon(status = packet.status)
                     }
+                }
+                
+                if (packet.path.isNotEmpty()) {
+                    Text(
+                        text = "Path: " + packet.path.joinToString(" ➔ ") { it.take(4) },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
         }
@@ -59,12 +68,14 @@ fun MessageBubble(packet: MeshPacket, isFromMe: Boolean) {
 fun StatusIcon(status: MessageStatus) {
     val icon = when (status) {
         MessageStatus.PENDING -> Icons.Default.AccessTime
+        MessageStatus.SENT -> Icons.Default.CheckCircle // Use same as delivered but maybe different color
         MessageStatus.BUFFERED -> Icons.Default.HourglassBottom
         MessageStatus.DELIVERED -> Icons.Default.CheckCircle
     }
     
     val tint = when (status) {
         MessageStatus.PENDING -> MaterialTheme.colorScheme.outline
+        MessageStatus.SENT -> MaterialTheme.colorScheme.secondary
         MessageStatus.BUFFERED -> MaterialTheme.colorScheme.tertiary
         MessageStatus.DELIVERED -> MaterialTheme.colorScheme.primary
     }

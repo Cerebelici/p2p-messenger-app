@@ -60,6 +60,11 @@ class MeshService : LifecycleService() {
 
     fun getLocalIp(): String = adapter?.getLocalIp() ?: "Unknown"
 
+    fun resetMesh() {
+        adapter?.clearPeers()
+        engine.resetMeshState()
+    }
+
     val connectionStatus: kotlinx.coroutines.flow.StateFlow<String?>
         get() = adapter?.connectionStatus ?: kotlinx.coroutines.flow.MutableStateFlow(null)
 

@@ -4,6 +4,7 @@ import java.util.UUID
 
 enum class MessageStatus {
     PENDING,  // Route Discovery (BFS/AODV)
+    SENT,     // Successfully put on the wire (for broadcasts)
     BUFFERED, // Active Relay (In LRU Cache)
     DELIVERED // ACK Received
 }
@@ -15,7 +16,9 @@ data class MeshPacket(
     val ttl: Int = 10,
     val payload: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val status: MessageStatus = MessageStatus.PENDING
+    val status: MessageStatus = MessageStatus.PENDING,
+    val hopCount: Int = 0,
+    val path: List<String> = emptyList()
 )
 
 data class Peer(
@@ -23,6 +26,7 @@ data class Peer(
     val alias: String? = null,
     val lastSeen: Long = System.currentTimeMillis(),
     val isDirectNeighbor: Boolean = false,
+    val isBlocked: Boolean = false,
     val connections: List<String> = emptyList() // List of NodeIDs this peer can see
 )
 

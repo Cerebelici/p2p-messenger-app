@@ -1,5 +1,6 @@
 package com.sudo.manet.protocol
 
+import android.util.Log
 import com.sudo.manet.routing.AodvRouter
 import com.sudo.manet.routing.GossipRouter
 import com.sudo.manet.routing.LinkStateRouter
@@ -21,6 +22,8 @@ sealed class EngineEvent {
     data class DuplicateDropped(val packetId: String) : EngineEvent()
     data class TtlExpired(val packetId: String) : EngineEvent()
     data class RouteFailed(val destId: NodeId) : EngineEvent()
+    data class PacketRelayed(val type: String, val sender: NodeId, val dest: NodeId) : EngineEvent()
+    data class PacketDropped(val reason: String, val from: NodeId) : EngineEvent()
 }
 
 class MeshProtocolEngine(
@@ -35,6 +38,27 @@ class MeshProtocolEngine(
     val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
     private val packetCache = PacketCache(maxSize = 200, dao = packetCacheDao)
     
+    // ── Demo Simulation ──────────────────────────────────────────────────
+    private val _blockedNodes = MutableStateFlow<Set<NodeId>>(emptySet())
+    val blockedNodes: StateFlow<Set<NodeId>> = _blockedNodes.asStateFlow()
+
+    fun toggleBlockNode(nodeId: NodeId) {
+        val current = _blockedNodes.value
+        if (current.contains(nodeId)) {
+            _blockedNodes.value = current - nodeId
+        } else {
+            _blockedNodes.value = current + nodeId
+        }
+        // Force a topology sync to tell others our links changed
+        syncTopology()
+    }
+
+    private fun getFilteredNeighbors(): List<NodeId> {
+        val all = getNeighbors()
+        val blocked = _blockedNodes.value
+        return all.filter { !blocked.contains(it) }
+    }
+
     // ── Metrics (exposed to dashboard) ──────────────────────────────────────
     private val _events = MutableStateFlow<EngineEvent?>(null)
     val events: StateFlow<EngineEvent?> = _events.asStateFlow()
@@ -52,7 +76,7 @@ class MeshProtocolEngine(
     private val gossipRouter = GossipRouter(
         localId = localId,
         transmit = ::transmit,
-        getNeighbors = getNeighbors,
+        getNeighbors = ::getFilteredNeighbors,
         onMessageReceived = { packet ->
             _events.value = EngineEvent.MessageReceived(packet)
             totalDelivered++
@@ -65,7 +89,7 @@ class MeshProtocolEngine(
     private val aodvRouter = AodvRouter(
         localId = localId,
         transmit = ::transmit,
-        getNeighbors = getNeighbors,
+        getNeighbors = ::getFilteredNeighbors,
         onMessageReceived = { packet ->
             _events.value = EngineEvent.MessageReceived(packet)
             totalDelivered++
@@ -91,7 +115,7 @@ class MeshProtocolEngine(
     private val linkStateRouter = LinkStateRouter(
         localId = localId,
         transmit = ::transmit,
-        getNeighbors = getNeighbors,
+        getNeighbors = ::getFilteredNeighbors,
         onMessageReceived = { packet ->
             _events.value = EngineEvent.MessageReceived(packet)
             totalDelivered++
@@ -105,11 +129,20 @@ class MeshProtocolEngine(
     // ── Public API ───────────────────────────────────────────────────────────
 
     fun sendGossip(message: String) {
-        packetCache.isNew(UUID_LIKE_ID()) // mark next one as seen if we were to receive it
+        val packet = Packet(
+            type = PacketType.MSG_GOSSIP,
+            senderId = localId,
+            destId = BROADCAST_ADDRESS,
+            ttl = defaultTtl,
+            payload = message
+        )
+        packetCache.isNew(packet.packetId) // Mark as seen so we don't process echoes
         gossipRouter.sendMessage(BROADCAST_ADDRESS, message)
     }
 
     fun sendDirect(destId: NodeId, message: String, useLinkState: Boolean = false) {
+        // We'd ideally pre-generate the packet ID here too to mark it as seen,
+        // but AodvRouter generates its own. For now, Gossip is the main concern for loops.
         if (useLinkState) {
             linkStateRouter.sendMessage(destId, message)
         } else {
@@ -129,7 +162,24 @@ class MeshProtocolEngine(
         syncTopology()
     }
 
+    fun resetMeshState() {
+        packetCache.clear()
+        linkStateRouter.clearTopology()
+        totalDelivered = 0
+        totalTransmissions = 0
+        totalDuplicates = 0
+        totalExpired = 0
+        totalHops = 0
+    }
+
     fun receive(packet: Packet, fromNeighbor: NodeId) {
+        // ── Step 0: simulation block check ──────────────────────────────────
+        if (_blockedNodes.value.contains(fromNeighbor)) {
+            Log.d("MeshEngine", "Dropped packet from blocked neighbor: $fromNeighbor")
+            _events.value = EngineEvent.PacketDropped("Blocked Node", fromNeighbor)
+            return
+        }
+
         // ── Step 1: duplicate check ──────────────────────────────────────────
         if (!packetCache.isNew(packet.packetId)) {
             totalDuplicates++
@@ -161,7 +211,16 @@ class MeshProtocolEngine(
 
     private fun transmit(toNeighbor: NodeId, packet: Packet) {
         totalTransmissions++
-        sendPacket(toNeighbor, packet)
+        // If we are not the original sender, this is a relay
+        if (packet.senderId != localId) {
+            _events.value = EngineEvent.PacketRelayed(
+                type = packet.type.name,
+                sender = packet.senderId,
+                dest = packet.destId
+            )
+        }
+        // We append our ID to the path whenever we send/forward a packet
+        sendPacket(toNeighbor, packet.withHop(localId))
     }
 
     private fun UUID_LIKE_ID() = java.util.UUID.randomUUID().toString()

@@ -5,13 +5,19 @@ import com.sudo.manet.storage.db.MeshDatabase
 import com.sudo.manet.storage.db.NodeEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.util.UUID
 
 object NodeIdentity {
-    var localNodeId: String = generateSha256(UUID.randomUUID().toString())
-        private set
+    private val _localNodeId = MutableStateFlow(generateSha256(UUID.randomUUID().toString()))
+    val nodeIdFlow = _localNodeId.asStateFlow()
+    
+    var localNodeId: String 
+        get() = _localNodeId.value
+        private set(value) { _localNodeId.value = value }
 
     private fun generateSha256(input: String): String {
         return MessageDigest.getInstance("SHA-256")
@@ -24,7 +30,9 @@ object NodeIdentity {
 
     fun init(context: Context) {
         db = MeshDatabase.getDatabase(context)
-        scope.launch {
+        // Use a blocking call during initialization to ensure the ID is ready
+        // for the MeshService which starts immediately after.
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
             val entity = db?.nodeDao()?.getNodeIdentity()
             if (entity != null) {
                 localNodeId = entity.nodeId

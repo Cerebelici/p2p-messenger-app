@@ -17,8 +17,10 @@ import com.sudo.manet.ui.viewmodels.MainViewModel
 @Composable
 fun DashboardScreen(viewModel: MainViewModel) {
     val peers by viewModel.peers.collectAsState()
-    // Filter out ourselves and only show real neighbors
-    val neighbors = peers.filter { it.isDirectNeighbor && it.nodeId != viewModel.myNodeId }
+    val myNodeId by viewModel.myNodeId.collectAsState()
+    // Filter out ourselves for the lists/graph
+    val otherPeers = peers.filter { it.nodeId != myNodeId }
+    val neighbors = otherPeers.filter { it.isDirectNeighbor }
     val scrollState = rememberScrollState()
 
     Column(
@@ -41,7 +43,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(start = 8.dp, top = 4.dp)
                 )
-                MeshGraph(peers = peers)
+                MeshGraph(peers = otherPeers)
             }
         }
 
@@ -50,7 +52,7 @@ fun DashboardScreen(viewModel: MainViewModel) {
                 val context = LocalContext.current
                 Text("Local Node Identity", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = viewModel.myNodeId,
+                    text = myNodeId,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(top = 4.dp)
@@ -71,15 +73,24 @@ fun DashboardScreen(viewModel: MainViewModel) {
                     Button(
                         onClick = { viewModel.forceMeshSync() },
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
                         Text("Force Sync", style = MaterialTheme.typography.labelSmall)
+                    }
+
+                    Button(
+                        onClick = { viewModel.resetMesh() },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    ) {
+                        Text("Reset Mesh", style = MaterialTheme.typography.labelSmall)
                     }
                     
                     OutlinedButton(
                         onClick = { viewModel.regenerateIdentity(context) },
                         modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(horizontal = 8.dp)
+                        contentPadding = PaddingValues(horizontal = 4.dp)
                     ) {
                         Text("New ID", style = MaterialTheme.typography.labelSmall)
                     }
@@ -145,20 +156,6 @@ fun DashboardScreen(viewModel: MainViewModel) {
                 ) {
                     Text("Connect to Peer")
                 }
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Surface(
-                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        text = "Tip: If using an emulator, use your COMPUTER'S IP on the phone.",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(8.dp),
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
             }
         }
 
@@ -174,9 +171,46 @@ fun DashboardScreen(viewModel: MainViewModel) {
         Text("Active Neighbor PeerHandles", style = MaterialTheme.typography.titleSmall)
         neighbors.forEach { peer ->
             ListItem(
-                headlineContent = { Text(peer.alias ?: "Neighbor") },
-                supportingContent = { Text(peer.nodeId.take(24) + "...") }
+                headlineContent = { 
+                    Text(
+                        text = peer.alias ?: "Neighbor",
+                        color = if (peer.isBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    ) 
+                },
+                supportingContent = { Text(peer.nodeId.take(24) + "...") },
+                trailingContent = {
+                    Button(
+                        onClick = { viewModel.toggleBlockNode(peer.nodeId) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (peer.isBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Text(if (peer.isBlocked) "Unblock" else "Block")
+                    }
+                }
             )
+        }
+
+        // Live Mesh Traffic Logs
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val logs by viewModel.networkLogs.collectAsState()
+                Text("Live Mesh Traffic", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                if (logs.isEmpty()) {
+                    Text("No activity detected yet...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+                logs.forEach { log ->
+                    Text(
+                        text = log,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    )
+                }
+            }
         }
     }
 }

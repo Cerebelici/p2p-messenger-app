@@ -18,11 +18,12 @@ import com.sudo.manet.ui.viewmodels.MainViewModel
 fun ChatScreen(peerId: String, viewModel: MainViewModel, onBack: () -> Unit) {
     val messages by viewModel.messages.collectAsState()
     val peers by viewModel.peers.collectAsState()
+    val myNodeId by viewModel.myNodeId.collectAsState()
     val peer = peers.find { it.nodeId == peerId }
     
     val chatMessages = messages.filter { 
-        (it.senderId == viewModel.myNodeId && it.destId == peerId) || 
-        (it.senderId == peerId && it.destId == viewModel.myNodeId) 
+        (it.senderId == myNodeId && it.destId == peerId) || 
+        (it.senderId == peerId && it.destId == myNodeId) 
     }
     
     var textState by remember { mutableStateOf("") }
@@ -54,7 +55,7 @@ fun ChatScreen(peerId: String, viewModel: MainViewModel, onBack: () -> Unit) {
                 items(chatMessages) { message ->
                     MessageBubble(
                         packet = message,
-                        isFromMe = message.senderId == viewModel.myNodeId
+                        isFromMe = message.senderId == myNodeId
                     )
                 }
             }

@@ -34,6 +34,8 @@ class NsdTransportAdapter(
 
     // Map of NodeId to resolved service info
     private val discoveredPeers = ConcurrentHashMap<NodeId, NsdServiceInfo>()
+    // Set of NodeIds that were manually connected (should not be overwritten by NSD)
+    private val manualPeers = java.util.Collections.newSetFromMap(ConcurrentHashMap<NodeId, Boolean>())
     
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isRunning = false
@@ -60,6 +62,11 @@ class NsdTransportAdapter(
             Log.e(TAG, "Error getting local IP", e)
         }
         return "Unknown"
+    }
+
+    fun clearPeers() {
+        discoveredPeers.clear()
+        _connectionStatus.value = "Mesh data cleared"
     }
 
     fun setEngine(engine: MeshProtocolEngine) {
@@ -135,6 +142,11 @@ class NsdTransportAdapter(
                     oos.writeObject(packet)
                     oos.flush()
                 }
+                
+                // We'll learn the peer ID when they respond with their own LSA 
+                // via handleIncomingConnection, but we can't mark it as manual yet 
+                // because we don't know their ID here.
+                
                 _connectionStatus.value = "Successfully poked $ip"
                 Log.d(TAG, "Manual probe sent to $ip:$port")
             } catch (e: Exception) {
@@ -160,17 +172,18 @@ class NsdTransportAdapter(
                         return@launch
                     }
 
-                    // For manual/emulator connections, we might not have discovered this peer via NSD.
-                    // If we don't know them, add them using the socket's address and assume their port 
-                    // is 8888 if they are connecting to us (standard for this app).
-                    if (!discoveredPeers.containsKey(fromPeer)) {
-                        Log.d(TAG, "Learning about unknown peer $fromPeer from incoming connection at ${remoteHost.hostAddress}")
+                    // If this peer connected to us, it's a "reliable" connection path.
+                    // If we don't know them, or if we knew them via a potentially broken NSD path,
+                    // update their info with this working IP and mark as "Manual/Reliable".
+                    if (!discoveredPeers.containsKey(fromPeer) || !manualPeers.contains(fromPeer)) {
+                        Log.d(TAG, "Learning about reliable peer $fromPeer from incoming connection at ${remoteHost.hostAddress}")
                         val info = NsdServiceInfo().apply {
                             serviceName = fromPeer
                             host = remoteHost
                             port = 8888 // Default fallback port
                         }
                         discoveredPeers[fromPeer] = info
+                        manualPeers.add(fromPeer)
                         onPeerDiscovered(fromPeer)
                     }
 
@@ -264,8 +277,16 @@ class NsdTransportAdapter(
                     Log.e(TAG, "Resolve failed: $errorCode")
                 }
                 override fun onServiceResolved(resolvedInfo: NsdServiceInfo) {
-                    Log.d(TAG, "Service resolved: ${resolvedInfo.serviceName} at ${resolvedInfo.host}:${resolvedInfo.port}")
                     val peerId = resolvedInfo.serviceName
+                    
+                    // PROTECTION: If we already have a reliable manual IP for this peer,
+                    // do NOT let NSD overwrite it with an internal/broken IP (common with emulators).
+                    if (manualPeers.contains(peerId)) {
+                        Log.d(TAG, "Ignoring NSD update for manual peer $peerId to avoid overwriting stable tunnel IP")
+                        return
+                    }
+
+                    Log.d(TAG, "Service resolved: ${resolvedInfo.serviceName} at ${resolvedInfo.host}:${resolvedInfo.port}")
                     discoveredPeers[peerId] = resolvedInfo
                     onPeerDiscovered(peerId)
                 }
