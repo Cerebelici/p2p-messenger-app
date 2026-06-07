@@ -54,9 +54,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _connectionStatus = MutableStateFlow<String?>(null)
+    val connectionStatus: StateFlow<String?> = _connectionStatus
+
     private fun observeEngine() {
         val engine = meshService?.engine ?: return
         
+        // Pipe the service status into our local state
+        viewModelScope.launch {
+            meshService?.connectionStatus?.collect {
+                _connectionStatus.value = it
+            }
+        }
         viewModelScope.launch {
             engine.events.collect { event ->
                 when (event) {
@@ -111,6 +120,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         _messages.value += packet
         meshService?.engine?.sendDirect(destId, text)
+    }
+
+    fun connectToPeer(ip: String, port: Int) {
+        meshService?.connectToManualPeer(ip, port)
+    }
+
+    fun getLocalPort(): Int = meshService?.getLocalPort() ?: -1
+
+    fun getLocalIp(): String = meshService?.getLocalIp() ?: "Unknown"
+
+    fun forceMeshSync() {
+        meshService?.engine?.forceFullSync()
+    }
+
+    fun regenerateIdentity(context: Context) {
+        NodeIdentity.regenerate(context)
     }
     
     // Helper for background layer to inject updates

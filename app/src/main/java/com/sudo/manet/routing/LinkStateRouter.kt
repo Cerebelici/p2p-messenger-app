@@ -84,8 +84,8 @@ class LinkStateRouter(
         val sender = packet.senderId
         val seq = packet.sequenceNumber
         
-        val lastSeq = lsaSequences[sender] ?: 0
-        if (seq > lastSeq) {
+        val lastSeq = lsaSequences[sender]
+        if (lastSeq == null || seq > lastSeq) {
             lsaSequences[sender] = seq
             val neighbors = packet.payload.split(",").filter { it.isNotEmpty() }.toSet()
             topology[sender] = neighbors

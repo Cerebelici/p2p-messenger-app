@@ -12,8 +12,7 @@ import androidx.lifecycle.LifecycleService
 import com.sudo.manet.protocol.MeshProtocolEngine
 import com.sudo.manet.storage.NodeIdentity
 import com.sudo.manet.storage.db.MeshDatabase
-import com.sudo.manet.transport.GlobalSimulation
-import com.sudo.manet.transport.SimulationTransportAdapter
+import com.sudo.manet.transport.NsdTransportAdapter
 
 class MeshService : LifecycleService() {
 
@@ -31,23 +30,42 @@ class MeshService : LifecycleService() {
         fun getService(): MeshService = this@MeshService
     }
 
+    private var adapter: NsdTransportAdapter? = null
+
     override fun onCreate() {
         super.onCreate()
         NodeIdentity.init(this)
         db = MeshDatabase.getDatabase(this)
         
-        val transport = GlobalSimulation.transport 
-        val adapter = SimulationTransportAdapter(NodeIdentity.localNodeId, transport)
+        val nsdAdapter = NsdTransportAdapter(this, NodeIdentity.localNodeId)
+        this.adapter = nsdAdapter
         
         _engine = MeshProtocolEngine(
-            sendPacket = { to, packet -> adapter.sendPacket(to, packet) },
-            getNeighbors = { adapter.getNeighbors() },
+            sendPacket = { to, packet -> nsdAdapter.sendPacket(to, packet) },
+            getNeighbors = { nsdAdapter.getNeighbors() },
             packetCacheDao = db.packetCacheDao(),
             routeDao = db.routeDao()
         )
-        adapter.setEngine(engine)
+        nsdAdapter.setEngine(engine)
+        nsdAdapter.start()
         
         startForeground(NOTIFICATION_ID, createNotification())
+    }
+
+    fun connectToManualPeer(ip: String, port: Int) {
+        adapter?.connectToManualPeer(ip, port)
+    }
+
+    fun getLocalPort(): Int = adapter?.getLocalPort() ?: -1
+
+    fun getLocalIp(): String = adapter?.getLocalIp() ?: "Unknown"
+
+    val connectionStatus: kotlinx.coroutines.flow.StateFlow<String?>
+        get() = adapter?.connectionStatus ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+
+    override fun onDestroy() {
+        adapter?.stop()
+        super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

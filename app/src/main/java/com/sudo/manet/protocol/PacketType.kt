@@ -1,6 +1,8 @@
 package com.sudo.manet.protocol
 
-enum class PacketType {
+import java.io.Serializable
+
+enum class PacketType : Serializable {
     MSG_GOSSIP,     // broadcast — handled by GossipRouter
     MSG_DIRECT,     // unicast — handled by AodvRouter
     RREQ,           // route request — flooded to find destination

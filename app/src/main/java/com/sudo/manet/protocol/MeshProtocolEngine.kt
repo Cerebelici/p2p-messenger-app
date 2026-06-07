@@ -32,7 +32,7 @@ class MeshProtocolEngine(
     packetCacheDao: PacketCacheDao? = null,
     routeDao: RouteDao? = null
 ) {
-    private val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
+    val localId: NodeId = nodeId ?: NodeIdentity.localNodeId
     private val packetCache = PacketCache(maxSize = 200, dao = packetCacheDao)
     
     // ── Metrics (exposed to dashboard) ──────────────────────────────────────
@@ -122,6 +122,11 @@ class MeshProtocolEngine(
      */
     fun syncTopology() {
         linkStateRouter.broadcastLocalLinkState()
+    }
+
+    fun forceFullSync() {
+        packetCache.clear() // Allow re-processing of LSAs
+        syncTopology()
     }
 
     fun receive(packet: Packet, fromNeighbor: NodeId) {

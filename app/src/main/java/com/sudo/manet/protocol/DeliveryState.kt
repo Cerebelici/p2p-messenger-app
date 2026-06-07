@@ -1,6 +1,8 @@
 package com.sudo.manet.protocol
 
-enum class DeliveryState {
+import java.io.Serializable
+
+enum class DeliveryState : Serializable {
     PENDING,        // sent, waiting for ACK
     DELIVERED,      // ACK received
     FAILED,         // route failed or max retries exceeded

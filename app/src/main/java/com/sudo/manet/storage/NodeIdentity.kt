@@ -41,4 +41,12 @@ object NodeIdentity {
             db?.nodeDao()?.insertNodeIdentity(NodeEntity(nodeId = id))
         }
     }
+
+    fun regenerate(context: Context) {
+        val newId = generateSha256(UUID.randomUUID().toString())
+        localNodeId = newId
+        scope.launch {
+            db?.nodeDao()?.insertNodeIdentity(NodeEntity(nodeId = newId))
+        }
+    }
 }
