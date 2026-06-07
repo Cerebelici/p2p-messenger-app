@@ -25,7 +25,7 @@ sealed class EngineEvent {
 
 class MeshProtocolEngine(
     private val sendPacket: (toNeighbor: NodeId, packet: Packet) -> Unit,
-    private val getNeighbors: () -> List<NodeId>,
+    val getNeighbors: () -> List<NodeId>,
     maxGossipFanout: Int = 7,
     private val defaultTtl: Int = 8,
     nodeId: NodeId? = null,   // injectable for tests
@@ -38,6 +38,8 @@ class MeshProtocolEngine(
     // ── Metrics (exposed to dashboard) ──────────────────────────────────────
     private val _events = MutableStateFlow<EngineEvent?>(null)
     val events: StateFlow<EngineEvent?> = _events.asStateFlow()
+
+    val topology: StateFlow<Map<NodeId, Set<NodeId>>> by lazy { linkStateRouter.topologyFlow }
 
     var totalDelivered = 0; private set
     var totalExpired = 0;   private set

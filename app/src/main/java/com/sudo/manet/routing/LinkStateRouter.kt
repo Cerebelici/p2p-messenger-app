@@ -4,6 +4,9 @@ import com.sudo.manet.protocol.BROADCAST_ADDRESS
 import com.sudo.manet.protocol.NodeId
 import com.sudo.manet.protocol.Packet
 import com.sudo.manet.protocol.PacketType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.PriorityQueue
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,6 +20,10 @@ class LinkStateRouter(
 
     // Topology map: NodeId -> Set of its neighbors
     private val topology = ConcurrentHashMap<NodeId, Set<NodeId>>()
+    
+    private val _topologyFlow = MutableStateFlow<Map<NodeId, Set<NodeId>>>(emptyMap())
+    val topologyFlow: StateFlow<Map<NodeId, Set<NodeId>>> = _topologyFlow.asStateFlow()
+
     // Sequence numbers for LSAs to prevent processing old info
     private val lsaSequences = ConcurrentHashMap<NodeId, Int>()
     private var localLsaSequence = 1
@@ -68,6 +75,7 @@ class LinkStateRouter(
         )
         // Update local topology view
         topology[localId] = neighbors.toSet()
+        _topologyFlow.value = topology.toMap()
         // Flood LSA
         neighbors.forEach { transmit(it, lsa) }
     }
@@ -81,6 +89,7 @@ class LinkStateRouter(
             lsaSequences[sender] = seq
             val neighbors = packet.payload.split(",").filter { it.isNotEmpty() }.toSet()
             topology[sender] = neighbors
+            _topologyFlow.value = topology.toMap()
             
             // Relay LSA (flooding)
             val relayed = packet.withTtl(packet.ttl - 1)

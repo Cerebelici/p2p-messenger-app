@@ -6,11 +6,18 @@ import com.sudo.manet.storage.db.NodeEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
 import java.util.UUID
 
 object NodeIdentity {
-    var localNodeId: String = UUID.randomUUID().toString().take(8).uppercase()
+    var localNodeId: String = generateSha256(UUID.randomUUID().toString())
         private set
+
+    private fun generateSha256(input: String): String {
+        return MessageDigest.getInstance("SHA-256")
+            .digest(input.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+    }
 
     private var db: MeshDatabase? = null
     private val scope = CoroutineScope(Dispatchers.IO)
