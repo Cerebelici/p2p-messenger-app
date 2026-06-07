@@ -37,6 +37,13 @@ class NsdTransportAdapter(
     // Set of NodeIds that were manually connected (should not be overwritten by NSD)
     private val manualPeers = java.util.Collections.newSetFromMap(ConcurrentHashMap<NodeId, Boolean>())
     
+    // Track failed send attempts per neighbor
+    private val failureCounts = ConcurrentHashMap<NodeId, Int>()
+    private val MAX_FAILURES = 3
+
+    // Per-neighbor transmission queues to avoid socket collisions
+    private val transmissionQueues = ConcurrentHashMap<NodeId, kotlinx.coroutines.channels.Channel<Packet>>()
+    
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isRunning = false
 
@@ -44,6 +51,11 @@ class NsdTransportAdapter(
     val connectionStatus = _connectionStatus.asStateFlow()
 
     fun getLocalPort() = localPort
+
+    fun getPeerTransportInfo(nodeId: NodeId): Pair<String, Int>? {
+        val info = discoveredPeers[nodeId] ?: return null
+        return info.host.hostAddress to info.port
+    }
 
     fun getLocalIp(): String {
         try {
@@ -132,20 +144,17 @@ class NsdTransportAdapter(
                 
                 socket.use { s ->
                     val oos = ObjectOutputStream(s.getOutputStream())
+                    // Send a HELLO packet with our listening port
                     val packet = Packet(
-                        type = PacketType.LSA,
+                        type = PacketType.HELLO,
                         senderId = localNodeId,
                         destId = BROADCAST_ADDRESS,
                         ttl = 1,
-                        payload = "" 
+                        payload = localPort.toString()
                     )
                     oos.writeObject(packet)
                     oos.flush()
                 }
-                
-                // We'll learn the peer ID when they respond with their own LSA 
-                // via handleIncomingConnection, but we can't mark it as manual yet 
-                // because we don't know their ID here.
                 
                 _connectionStatus.value = "Successfully poked $ip"
                 Log.d(TAG, "Manual probe sent to $ip:$port")
@@ -172,23 +181,34 @@ class NsdTransportAdapter(
                         return@launch
                     }
 
-                    // If this peer connected to us, it's a "reliable" connection path.
-                    // If we don't know them, or if we knew them via a potentially broken NSD path,
-                    // update their info with this working IP and mark as "Manual/Reliable".
-                    if (!discoveredPeers.containsKey(fromPeer) || !manualPeers.contains(fromPeer)) {
+                    // PROTECTION: Never learn that a peer is at 127.0.0.1. 
+                    // This happens in emulators via ADB tunnels and breaks the return path.
+                    if (remoteHost.isLoopbackAddress) {
+                        Log.d(TAG, "Received connection via tunnel from $fromPeer, skipping IP update to preserve physical path")
+                    } else if (!discoveredPeers.containsKey(fromPeer) || !manualPeers.contains(fromPeer)) {
                         Log.d(TAG, "Learning about reliable peer $fromPeer from incoming connection at ${remoteHost.hostAddress}")
+                        
+                        // Parse port from HELLO packet if available, else fallback to 8888
+                        val remotePort = if (packet.type == PacketType.HELLO) {
+                            packet.payload.toIntOrNull() ?: 8888
+                        } else {
+                            8888
+                        }
+
                         val info = NsdServiceInfo().apply {
                             serviceName = fromPeer
                             host = remoteHost
-                            port = 8888 // Default fallback port
+                            port = remotePort
                         }
                         discoveredPeers[fromPeer] = info
                         manualPeers.add(fromPeer)
                         onPeerDiscovered(fromPeer)
                     }
 
-                    Log.d(TAG, "Received packet ${packet.packetId} from $fromPeer")
-                    onPacketReceived(packet, fromPeer)
+                    if (packet.type != PacketType.HELLO) {
+                        Log.d(TAG, "Received packet ${packet.packetId} from $fromPeer")
+                        onPacketReceived(packet, fromPeer)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling incoming connection", e)
@@ -211,24 +231,53 @@ class NsdTransportAdapter(
     }
 
     override fun sendPacket(toNeighbor: NodeId, packet: Packet) {
-        val info = discoveredPeers[toNeighbor]
-        if (info == null) {
-            Log.w(TAG, "Attempted to send to unknown neighbor: $toNeighbor")
-            return
+        val queue = transmissionQueues.getOrPut(toNeighbor) {
+            val channel = kotlinx.coroutines.channels.Channel<Packet>(100)
+            startQueueWorker(toNeighbor, channel)
+            channel
         }
-
+        
         scope.launch {
-            try {
-                Socket(info.host, info.port).use { socket ->
-                    val oos = ObjectOutputStream(socket.getOutputStream())
-                    oos.writeObject(packet)
-                    oos.flush()
-                    Log.d(TAG, "Sent packet ${packet.packetId} to $toNeighbor")
+            queue.send(packet)
+        }
+    }
+
+    private fun startQueueWorker(neighborId: NodeId, channel: kotlinx.coroutines.channels.Channel<Packet>) {
+        scope.launch {
+            for (packet in channel) {
+                val info = discoveredPeers[neighborId]
+                if (info == null) {
+                    Log.w(TAG, "Worker: Neighbor $neighborId not found in discoveredPeers, dropping packet")
+                    continue
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending packet to $toNeighbor", e)
-                // If we can't connect, assume peer is lost
-                onPeerLost(toNeighbor)
+
+                try {
+                    val socket = Socket()
+                    socket.connect(java.net.InetSocketAddress(info.host, info.port), 4000)
+                    
+                    socket.use { s ->
+                        val oos = ObjectOutputStream(s.getOutputStream())
+                        oos.writeObject(packet)
+                        oos.flush()
+                        Log.d(TAG, "Worker: Sent packet ${packet.packetId} to $neighborId")
+                        failureCounts.remove(neighborId)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Worker: Error sending packet to $neighborId", e)
+                    val currentFailures = (failureCounts[neighborId] ?: 0) + 1
+                    failureCounts[neighborId] = currentFailures
+                    
+                    if (currentFailures >= MAX_FAILURES) {
+                        Log.w(TAG, "Worker: Neighbor $neighborId reached max failures ($MAX_FAILURES). Dropping peer.")
+                        onPeerLost(neighborId)
+                        failureCounts.remove(neighborId)
+                        transmissionQueues.remove(neighborId)
+                        channel.close()
+                        break // Stop worker
+                    }
+                }
+                // Small gap between packets to give the receiver's OS a breather
+                delay(50) 
             }
         }
     }

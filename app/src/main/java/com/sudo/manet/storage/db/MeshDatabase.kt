@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [NodeEntity::class, PacketCacheEntity::class, RouteEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MeshDatabase : RoomDatabase() {

@@ -15,6 +15,8 @@ class LinkStateRouter(
     private val transmit: (toNeighbor: NodeId, packet: Packet) -> Unit,
     private val getNeighbors: () -> List<NodeId>,
     private val onMessageReceived: (Packet) -> Unit,
+    private val initialSequence: Int = 1,
+    private val onSequenceUpdated: (Int) -> Unit = {},
     private val defaultTtl: Int = 8
 ) : Router {
 
@@ -26,7 +28,7 @@ class LinkStateRouter(
 
     // Sequence numbers for LSAs to prevent processing old info
     private val lsaSequences = ConcurrentHashMap<NodeId, Int>()
-    private var localLsaSequence = 1
+    private var localLsaSequence = initialSequence
 
     override fun handlePacket(packet: Packet, fromNeighbor: NodeId): Boolean {
         return when (packet.type) {
@@ -71,6 +73,7 @@ class LinkStateRouter(
     fun broadcastLocalLinkState() {
         val neighbors = getNeighbors()
         localLsaSequence++
+        onSequenceUpdated(localLsaSequence)
         val lsa = Packet(
             type = PacketType.LSA,
             senderId = localId,

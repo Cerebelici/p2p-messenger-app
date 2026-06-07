@@ -177,7 +177,18 @@ fun DashboardScreen(viewModel: MainViewModel) {
                         color = if (peer.isBlocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                     ) 
                 },
-                supportingContent = { Text(peer.nodeId.take(24) + "...") },
+                supportingContent = { 
+                    Column {
+                        Text(peer.nodeId.take(24) + "...") 
+                        if (peer.ip != null) {
+                            Text(
+                                text = "Address: ${peer.ip}:${peer.port}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+                },
                 trailingContent = {
                     Button(
                         onClick = { viewModel.toggleBlockNode(peer.nodeId) },

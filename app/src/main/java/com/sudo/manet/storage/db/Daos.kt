@@ -5,7 +5,9 @@ import androidx.room.*
 @Entity(tableName = "node_identity")
 data class NodeEntity(
     @PrimaryKey val id: Int = 0, // Singleton node ID for this device
-    val nodeId: String
+    val nodeId: String,
+    val lsaSequence: Int = 1,
+    val aodvSequence: Int = 1
 )
 
 @Entity(tableName = "packet_cache")

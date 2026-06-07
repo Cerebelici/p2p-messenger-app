@@ -27,7 +27,9 @@ data class Peer(
     val lastSeen: Long = System.currentTimeMillis(),
     val isDirectNeighbor: Boolean = false,
     val isBlocked: Boolean = false,
-    val connections: List<String> = emptyList() // List of NodeIDs this peer can see
+    val connections: List<String> = emptyList(), // List of NodeIDs this peer can see
+    val ip: String? = null,
+    val port: Int? = null
 )
 
 object NetworkConstants {

@@ -80,11 +80,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             combine(engine.topology, engine.blockedNodes, myNodeId) { topoMap, blocked, currentId ->
                 topoMap.map { (nodeId, neighbors) ->
+                    val transportInfo = meshService?.getPeerTransportInfo(nodeId)
                     Peer(
                         nodeId = nodeId,
                         isDirectNeighbor = engine.getNeighbors().contains(nodeId),
                         isBlocked = blocked.contains(nodeId),
-                        connections = neighbors.toList()
+                        connections = neighbors.toList(),
+                        ip = transportInfo?.first,
+                        port = transportInfo?.second
                     )
                 }.filter { it.nodeId != currentId }
             }.collect { newPeers ->
@@ -104,10 +107,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         addLog("Ack received for ${event.packetId.take(4)}")
                     }
                     is EngineEvent.PacketRelayed -> {
-                        addLog("Relaying ${event.type} to mesh")
+                        addLog("Relaying ${event.type} for ${event.sender.take(4)} to ${event.dest.take(4)}")
                     }
                     is EngineEvent.PacketDropped -> {
-                        addLog("Dropped packet from ${event.from.take(4)} ($event.reason)")
+                        addLog("Dropped from ${event.from.take(4)} ($event.reason)")
+                    }
+                    is EngineEvent.RouteDiscoveryStarted -> {
+                        addLog("Searching for route to ${event.destId.take(4)}...")
+                    }
+                    is EngineEvent.RouteFound -> {
+                        addLog("Found route to ${event.destId.take(4)} via ${event.nextHop.take(4)}")
+                    }
+                    is EngineEvent.RouteFailed -> {
+                        addLog("FAILED to reach ${event.destId.take(4)}")
                     }
                     else -> {}
                 }

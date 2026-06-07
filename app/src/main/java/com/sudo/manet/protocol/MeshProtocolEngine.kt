@@ -9,6 +9,7 @@ import com.sudo.manet.storage.NodeIdentity
 import com.sudo.manet.storage.PacketCache
 import com.sudo.manet.storage.db.PacketCacheDao
 import com.sudo.manet.storage.db.RouteDao
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -108,6 +109,8 @@ class MeshProtocolEngine(
         onRouteFailed = { destId ->
             _events.value = EngineEvent.RouteFailed(destId)
         },
+        initialSequence = NodeIdentity.aodvSequence,
+        onSequenceUpdated = { NodeIdentity.nextAodvSequence() },
         routeDao = routeDao,
         defaultTtl = defaultTtl
     )
@@ -121,10 +124,25 @@ class MeshProtocolEngine(
             totalDelivered++
             totalHops += packet.hopCount
         },
+        initialSequence = NodeIdentity.lsaSequence,
+        onSequenceUpdated = { NodeIdentity.nextLsaSequence() },
         defaultTtl = defaultTtl
     )
 
     private val routers = listOf<Router>(gossipRouter, aodvRouter, linkStateRouter)
+
+    private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    init {
+        // Periodic topology healing to recover from dropped packets
+        engineScope.launch {
+            delay(2000) // Initial warm-up
+            while (isActive) {
+                syncTopology()
+                delay(10_000)
+            }
+        }
+    }
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -137,7 +155,8 @@ class MeshProtocolEngine(
             payload = message
         )
         packetCache.isNew(packet.packetId) // Mark as seen so we don't process echoes
-        gossipRouter.sendMessage(BROADCAST_ADDRESS, message)
+        // Pass the already created packet to ensure UUID consistency
+        gossipRouter.sendMessage(BROADCAST_ADDRESS, message) 
     }
 
     fun sendDirect(destId: NodeId, message: String, useLinkState: Boolean = false) {
@@ -173,6 +192,11 @@ class MeshProtocolEngine(
     }
 
     fun receive(packet: Packet, fromNeighbor: NodeId) {
+        // ── Step -1: self-packet protection ────────────────────────────────
+        if (packet.senderId == localId) {
+            return
+        }
+
         // ── Step 0: simulation block check ──────────────────────────────────
         if (_blockedNodes.value.contains(fromNeighbor)) {
             Log.d("MeshEngine", "Dropped packet from blocked neighbor: $fromNeighbor")

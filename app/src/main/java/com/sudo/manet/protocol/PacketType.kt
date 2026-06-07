@@ -9,5 +9,6 @@ enum class PacketType : Serializable {
     RREP,           // route reply — sent back along reverse path
     RERR,           // route error — notified when a link breaks
     LSA,            // link-state advertisement — for Dijkstra
-    ACK             // acknowledgement — confirms direct delivery
+    ACK,            // acknowledgement — confirms direct delivery
+    HELLO           // initial handshake to share port info
 }

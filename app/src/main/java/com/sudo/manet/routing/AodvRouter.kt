@@ -30,6 +30,8 @@ class AodvRouter(
     private val onRouteDiscoveryStarted: (NodeId) -> Unit,
     private val onRouteFound: (NodeId, NodeId) -> Unit,
     private val onRouteFailed: (NodeId) -> Unit,
+    private val initialSequence: Int = 1,
+    private val onSequenceUpdated: (Int) -> Unit = {},
     private val routeDao: RouteDao? = null,
     private val defaultTtl: Int = 8
 ) : Router {
@@ -38,7 +40,7 @@ class AodvRouter(
     private val reversePath = ConcurrentHashMap<String, NodeId>() // rreqId -> previousHop
     private val pendingMessages = ConcurrentHashMap<String, MutableList<Packet>>() // destId -> packets
     private val scope = CoroutineScope(Dispatchers.IO)
-    private var localSequenceNumber = 1
+    private var localSequenceNumber = initialSequence
 
     init {
         loadRoutesFromDb()
@@ -129,6 +131,7 @@ class AodvRouter(
         if (packet.destId == localId) {
             // We are the destination, reply with RREP
             localSequenceNumber++
+            onSequenceUpdated(localSequenceNumber)
             val rrep = Packet(
                 type = PacketType.RREP,
                 senderId = localId,
@@ -217,6 +220,8 @@ class AodvRouter(
 
     private fun startRouteDiscovery(destId: NodeId) {
         onRouteDiscoveryStarted(destId)
+        localSequenceNumber++
+        onSequenceUpdated(localSequenceNumber)
         val rreq = Packet(
             type = PacketType.RREQ,
             senderId = localId,

@@ -58,6 +58,8 @@ class MeshService : LifecycleService() {
 
     fun getLocalPort(): Int = adapter?.getLocalPort() ?: -1
 
+    fun getPeerTransportInfo(nodeId: String): Pair<String, Int>? = adapter?.getPeerTransportInfo(nodeId)
+
     fun getLocalIp(): String = adapter?.getLocalIp() ?: "Unknown"
 
     fun resetMesh() {

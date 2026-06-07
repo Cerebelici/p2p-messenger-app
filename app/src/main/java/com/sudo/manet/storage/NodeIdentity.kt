@@ -19,6 +19,11 @@ object NodeIdentity {
         get() = _localNodeId.value
         private set(value) { _localNodeId.value = value }
 
+    var lsaSequence: Int = 1
+        private set
+    var aodvSequence: Int = 1
+        private set
+
     private fun generateSha256(input: String): String {
         return MessageDigest.getInstance("SHA-256")
             .digest(input.toByteArray())
@@ -36,10 +41,34 @@ object NodeIdentity {
             val entity = db?.nodeDao()?.getNodeIdentity()
             if (entity != null) {
                 localNodeId = entity.nodeId
+                lsaSequence = entity.lsaSequence
+                aodvSequence = entity.aodvSequence
             } else {
                 // First run, save the generated ID
                 db?.nodeDao()?.insertNodeIdentity(NodeEntity(nodeId = localNodeId))
             }
+        }
+    }
+
+    fun nextLsaSequence(): Int {
+        lsaSequence++
+        saveSequences()
+        return lsaSequence
+    }
+
+    fun nextAodvSequence(): Int {
+        aodvSequence++
+        saveSequences()
+        return aodvSequence
+    }
+
+    private fun saveSequences() {
+        scope.launch {
+            db?.nodeDao()?.insertNodeIdentity(NodeEntity(
+                nodeId = localNodeId,
+                lsaSequence = lsaSequence,
+                aodvSequence = aodvSequence
+            ))
         }
     }
 
