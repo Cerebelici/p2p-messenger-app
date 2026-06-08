@@ -55,7 +55,9 @@ class WifiAwareTransportAdapter(
     private val _connectionStatus = MutableStateFlow<String?>("Initializing Wi-Fi Aware...")
     val connectionStatus = _connectionStatus.asStateFlow()
 
-    fun getLocalPort() = localPort
+    fun setEngine(engine: MeshProtocolEngine) {
+        this.engine = engine
+    }
 
     fun getLocalIp(): String {
         return if (awareSession != null) "Wi-Fi Aware (Active)" else "Wi-Fi Aware (Waiting)"
