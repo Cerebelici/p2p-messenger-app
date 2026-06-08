@@ -45,6 +45,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val intent = Intent(application, MeshService::class.java)
+        // Explicitly start as foreground service to ensure it stays alive
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            application.startForegroundService(intent)
+        } else {
+            application.startService(intent)
+        }
         application.bindService(intent, connection, Context.BIND_AUTO_CREATE)
         
         // Keep our local ID in sync with the global identity
@@ -214,6 +220,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         payload = this.payload,
         status = when (this.status) {
             com.sudo.manet.protocol.DeliveryState.DELIVERED -> MessageStatus.DELIVERED
+            com.sudo.manet.protocol.DeliveryState.BUFFERED -> MessageStatus.BUFFERED
+            com.sudo.manet.protocol.DeliveryState.PENDING -> MessageStatus.PENDING
             else -> MessageStatus.PENDING
         },
         hopCount = this.hopCount,

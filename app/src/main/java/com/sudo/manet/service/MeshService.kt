@@ -12,7 +12,7 @@ import androidx.lifecycle.LifecycleService
 import com.sudo.manet.protocol.MeshProtocolEngine
 import com.sudo.manet.storage.NodeIdentity
 import com.sudo.manet.storage.db.MeshDatabase
-import com.sudo.manet.transport.NsdTransportAdapter
+import com.sudo.manet.transport.WifiAwareTransportAdapter
 
 class MeshService : LifecycleService() {
 
@@ -30,37 +30,38 @@ class MeshService : LifecycleService() {
         fun getService(): MeshService = this@MeshService
     }
 
-    private var adapter: NsdTransportAdapter? = null
+    private var adapter: WifiAwareTransportAdapter? = null
 
     override fun onCreate() {
         super.onCreate()
         NodeIdentity.init(this)
         db = MeshDatabase.getDatabase(this)
         
-        val nsdAdapter = NsdTransportAdapter(this, NodeIdentity.localNodeId)
-        this.adapter = nsdAdapter
+        val wifiAwareAdapter = WifiAwareTransportAdapter(this, NodeIdentity.localNodeId)
+        this.adapter = wifiAwareAdapter
         
         _engine = MeshProtocolEngine(
-            sendPacket = { to, packet -> nsdAdapter.sendPacket(to, packet) },
-            getNeighbors = { nsdAdapter.getNeighbors() },
+            sendPacket = { to, packet -> wifiAwareAdapter.sendPacket(to, packet) },
+            getNeighbors = { wifiAwareAdapter.getNeighbors() },
             packetCacheDao = db.packetCacheDao(),
             routeDao = db.routeDao()
         )
-        nsdAdapter.setEngine(engine)
-        nsdAdapter.start()
+        wifiAwareAdapter.setEngine(engine)
+        wifiAwareAdapter.start()
         
         startForeground(NOTIFICATION_ID, createNotification())
     }
 
     fun connectToManualPeer(ip: String, port: Int) {
-        adapter?.connectToManualPeer(ip, port)
+        // Wi-Fi Aware handles discovery automatically
+        adapter?.retry()
     }
 
-    fun getLocalPort(): Int = adapter?.getLocalPort() ?: -1
+    fun getLocalPort(): Int = adapter?.localPort ?: -1
 
-    fun getPeerTransportInfo(nodeId: String): Pair<String, Int>? = adapter?.getPeerTransportInfo(nodeId)
+    fun getPeerTransportInfo(nodeId: String): Pair<String, Int>? = null
 
-    fun getLocalIp(): String = adapter?.getLocalIp() ?: "Unknown"
+    fun getLocalIp(): String = adapter?.getLocalIp() ?: "Wi-Fi Aware"
 
     fun resetMesh() {
         adapter?.clearPeers()
