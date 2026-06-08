@@ -22,7 +22,7 @@ class GossipRouter(
 
         // Forward to neighbors
         if (packet.ttl > 0) {
-            forward(packet)
+            forward(packet, excludeNeighbor = fromNeighbor)
         }
         
         return true
@@ -43,9 +43,10 @@ class GossipRouter(
         // Gossip doesn't maintain state about neighbors
     }
 
-    private fun forward(packet: Packet) {
-        val relayed = packet.withTtl(packet.ttl - 1).withHop()
+    private fun forward(packet: Packet, excludeNeighbor: NodeId? = null) {
+        val relayed = packet.withTtl(packet.ttl - 1)
         getNeighbors()
+            .filter { it != excludeNeighbor }
             .shuffled()
             .take(maxGossipFanout)
             .forEach { neighbor ->

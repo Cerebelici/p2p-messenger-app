@@ -30,6 +30,8 @@ class AodvRouter(
     private val onRouteDiscoveryStarted: (NodeId) -> Unit,
     private val onRouteFound: (NodeId, NodeId) -> Unit,
     private val onRouteFailed: (NodeId) -> Unit,
+    private val initialSequence: Int = 1,
+    private val onSequenceUpdated: (Int) -> Unit = {},
     private val routeDao: RouteDao? = null,
     private val defaultTtl: Int = 8
 ) : Router {
@@ -38,7 +40,7 @@ class AodvRouter(
     private val reversePath = ConcurrentHashMap<String, NodeId>() // rreqId -> previousHop
     private val pendingMessages = ConcurrentHashMap<String, MutableList<Packet>>() // destId -> packets
     private val scope = CoroutineScope(Dispatchers.IO)
-    private var localSequenceNumber = 1
+    private var localSequenceNumber = initialSequence
 
     init {
         loadRoutesFromDb()
@@ -105,7 +107,7 @@ class AodvRouter(
         } else {
             val route = routingTable[packet.destId]
             if (route != null && !route.isExpired() && !route.isInvalid) {
-                transmit(route.nextHop, packet.withTtl(packet.ttl - 1).withHop())
+                transmit(route.nextHop, packet.withTtl(packet.ttl - 1))
             } else {
                 // If no route, we could start discovery, but usually the source does it.
                 // For now, just drop and maybe send RERR back.
@@ -129,6 +131,7 @@ class AodvRouter(
         if (packet.destId == localId) {
             // We are the destination, reply with RREP
             localSequenceNumber++
+            onSequenceUpdated(localSequenceNumber)
             val rrep = Packet(
                 type = PacketType.RREP,
                 senderId = localId,
@@ -142,7 +145,7 @@ class AodvRouter(
         } else {
             // Relay RREQ
             if (packet.ttl > 0) {
-                val relayed = packet.withTtl(packet.ttl - 1).withHop()
+                val relayed = packet.withTtl(packet.ttl - 1)
                 getNeighbors().filter { it != fromNeighbor }.forEach { neighbor ->
                     transmit(neighbor, relayed)
                 }
@@ -171,7 +174,7 @@ class AodvRouter(
             // Relay RREP back along reverse path
             val prevHop = reversePath[packet.payload]
             if (prevHop != null && packet.ttl > 0) {
-                val relayed = packet.withTtl(packet.ttl - 1).withHop()
+                val relayed = packet.withTtl(packet.ttl - 1)
                 transmit(prevHop, relayed)
             }
         }
@@ -217,6 +220,8 @@ class AodvRouter(
 
     private fun startRouteDiscovery(destId: NodeId) {
         onRouteDiscoveryStarted(destId)
+        localSequenceNumber++
+        onSequenceUpdated(localSequenceNumber)
         val rreq = Packet(
             type = PacketType.RREQ,
             senderId = localId,

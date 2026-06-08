@@ -12,8 +12,7 @@ import androidx.lifecycle.LifecycleService
 import com.sudo.manet.protocol.MeshProtocolEngine
 import com.sudo.manet.storage.NodeIdentity
 import com.sudo.manet.storage.db.MeshDatabase
-import com.sudo.manet.transport.GlobalSimulation
-import com.sudo.manet.transport.SimulationTransportAdapter
+import com.sudo.manet.transport.WifiAwareTransportAdapter
 
 class MeshService : LifecycleService() {
 
@@ -31,23 +30,50 @@ class MeshService : LifecycleService() {
         fun getService(): MeshService = this@MeshService
     }
 
+    private var adapter: WifiAwareTransportAdapter? = null
+
     override fun onCreate() {
         super.onCreate()
         NodeIdentity.init(this)
         db = MeshDatabase.getDatabase(this)
         
-        val transport = GlobalSimulation.transport 
-        val adapter = SimulationTransportAdapter(NodeIdentity.localNodeId, transport)
+        val wifiAwareAdapter = WifiAwareTransportAdapter(this, NodeIdentity.localNodeId)
+        this.adapter = wifiAwareAdapter
         
         _engine = MeshProtocolEngine(
-            sendPacket = { to, packet -> adapter.sendPacket(to, packet) },
-            getNeighbors = { adapter.getNeighbors() },
+            sendPacket = { to, packet -> wifiAwareAdapter.sendPacket(to, packet) },
+            getNeighbors = { wifiAwareAdapter.getNeighbors() },
             packetCacheDao = db.packetCacheDao(),
             routeDao = db.routeDao()
         )
-        adapter.setEngine(engine)
+        wifiAwareAdapter.setEngine(engine)
+        wifiAwareAdapter.start()
         
         startForeground(NOTIFICATION_ID, createNotification())
+    }
+
+    fun connectToManualPeer(ip: String, port: Int) {
+        // Wi-Fi Aware handles discovery automatically
+        adapter?.retry()
+    }
+
+    fun getLocalPort(): Int = adapter?.localPort ?: -1
+
+    fun getPeerTransportInfo(nodeId: String): Pair<String, Int>? = null
+
+    fun getLocalIp(): String = adapter?.getLocalIp() ?: "Wi-Fi Aware"
+
+    fun resetMesh() {
+        adapter?.clearPeers()
+        engine.resetMeshState()
+    }
+
+    val connectionStatus: kotlinx.coroutines.flow.StateFlow<String?>
+        get() = adapter?.connectionStatus ?: kotlinx.coroutines.flow.MutableStateFlow(null)
+
+    override fun onDestroy() {
+        adapter?.stop()
+        super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

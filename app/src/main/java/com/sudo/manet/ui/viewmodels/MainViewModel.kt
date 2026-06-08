@@ -1,16 +1,137 @@
 package com.sudo.manet.ui.viewmodels
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.sudo.manet.models.MessageStatus
 import com.sudo.manet.models.MeshPacket
 import com.sudo.manet.models.NetworkConstants
 import com.sudo.manet.models.Peer
+import com.sudo.manet.protocol.EngineEvent
+import com.sudo.manet.protocol.Packet
+import com.sudo.manet.service.MeshService
+import com.sudo.manet.storage.NodeIdentity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
-class MainViewModel : ViewModel() {
-    // Current user's SHA-256 ID (Fixed for session)
-    val myNodeId = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+class MainViewModel(application: Application) : AndroidViewModel(application) {
+    // Current user's SHA-256 ID
+    private val _myNodeId = MutableStateFlow(NodeIdentity.localNodeId)
+    val myNodeId: StateFlow<String> = _myNodeId
+
+    private var meshService: MeshService? = null
+    private var isBound = false
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as MeshService.MeshBinder
+            meshService = binder.getService()
+            isBound = true
+            observeEngine()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            meshService = null
+            isBound = false
+        }
+    }
+
+    init {
+        val intent = Intent(application, MeshService::class.java)
+        // Explicitly start as foreground service to ensure it stays alive
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            application.startForegroundService(intent)
+        } else {
+            application.startService(intent)
+        }
+        application.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        
+        // Keep our local ID in sync with the global identity
+        viewModelScope.launch {
+            NodeIdentity.nodeIdFlow.collect {
+                _myNodeId.value = it
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        if (isBound) {
+            getApplication<Application>().unbindService(connection)
+            isBound = false
+        }
+    }
+
+    private val _connectionStatus = MutableStateFlow<String?>(null)
+    val connectionStatus: StateFlow<String?> = _connectionStatus
+
+    private fun observeEngine() {
+        val engine = meshService?.engine ?: return
+        
+        // Pipe the service status into our local state
+        viewModelScope.launch {
+            meshService?.connectionStatus?.collect {
+                _connectionStatus.value = it
+            }
+        }
+
+        // Combine topology and blocked nodes to create a reactive peers list
+        viewModelScope.launch {
+            combine(engine.topology, engine.blockedNodes, myNodeId) { topoMap, blocked, currentId ->
+                topoMap.map { (nodeId, neighbors) ->
+                    val transportInfo = meshService?.getPeerTransportInfo(nodeId)
+                    Peer(
+                        nodeId = nodeId,
+                        isDirectNeighbor = engine.getNeighbors().contains(nodeId),
+                        isBlocked = blocked.contains(nodeId),
+                        connections = neighbors.toList(),
+                        ip = transportInfo?.first,
+                        port = transportInfo?.second
+                    )
+                }.filter { it.nodeId != currentId }
+            }.collect { newPeers ->
+                updatePeers(newPeers)
+            }
+        }
+        
+        viewModelScope.launch {
+            engine.events.collect { event ->
+                when (event) {
+                    is EngineEvent.MessageReceived -> {
+                        addReceivedPacket(event.packet.toUI())
+                        addLog("Received ${event.packet.type} from ${event.packet.senderId.take(4)}")
+                    }
+                    is EngineEvent.AckReceived -> {
+                        updateMessageStatus(event.packetId, MessageStatus.DELIVERED)
+                        addLog("Ack received for ${event.packetId.take(4)}")
+                    }
+                    is EngineEvent.PacketRelayed -> {
+                        addLog("Relaying ${event.type} for ${event.sender.take(4)} to ${event.dest.take(4)}")
+                    }
+                    is EngineEvent.PacketDropped -> {
+                        addLog("Dropped from ${event.from.take(4)} ($event.reason)")
+                    }
+                    is EngineEvent.RouteDiscoveryStarted -> {
+                        addLog("Searching for route to ${event.destId.take(4)}...")
+                    }
+                    is EngineEvent.RouteFound -> {
+                        addLog("Found route to ${event.destId.take(4)} via ${event.nextHop.take(4)}")
+                    }
+                    is EngineEvent.RouteFailed -> {
+                        addLog("FAILED to reach ${event.destId.take(4)}")
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
 
     private val _messages = MutableStateFlow<List<MeshPacket>>(emptyList())
     val messages: StateFlow<List<MeshPacket>> = _messages
@@ -18,24 +139,56 @@ class MainViewModel : ViewModel() {
     private val _peers = MutableStateFlow<List<Peer>>(emptyList())
     val peers: StateFlow<List<Peer>> = _peers
 
+    private val _networkLogs = MutableStateFlow<List<String>>(emptyList())
+    val networkLogs: StateFlow<List<String>> = _networkLogs
+
     fun sendBroadcast(text: String) {
         val packet = MeshPacket(
-            senderId = myNodeId,
+            senderId = myNodeId.value,
             destId = NetworkConstants.BROADCAST_DEST,
             payload = text,
-            status = MessageStatus.PENDING
+            status = MessageStatus.SENT
         )
         _messages.value += packet
+        meshService?.engine?.sendGossip(text)
     }
 
     fun sendDirectMessage(destId: String, text: String) {
         val packet = MeshPacket(
-            senderId = myNodeId,
+            senderId = myNodeId.value,
             destId = destId,
             payload = text,
             status = MessageStatus.PENDING
         )
         _messages.value += packet
+        meshService?.engine?.sendDirect(destId, text)
+    }
+
+    fun connectToPeer(ip: String, port: Int) {
+        meshService?.connectToManualPeer(ip, port)
+    }
+
+    fun getLocalPort(): Int = meshService?.getLocalPort() ?: -1
+
+    fun getLocalIp(): String = meshService?.getLocalIp() ?: "Unknown"
+
+    fun forceMeshSync() {
+        meshService?.engine?.forceFullSync()
+    }
+
+    fun regenerateIdentity(context: Context) {
+        NodeIdentity.regenerate(context)
+        // Restart the service so the engine picks up the new ID
+        context.stopService(Intent(context, MeshService::class.java))
+        context.startService(Intent(context, MeshService::class.java))
+    }
+
+    fun resetMesh() {
+        meshService?.resetMesh()
+    }
+
+    fun toggleBlockNode(nodeId: String) {
+        meshService?.engine?.toggleBlockNode(nodeId)
     }
     
     // Helper for background layer to inject updates
@@ -46,4 +199,32 @@ class MainViewModel : ViewModel() {
     fun addReceivedPacket(packet: MeshPacket) {
         _messages.value += packet
     }
+
+    private fun addLog(message: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+        val newLog = "[$timestamp] $message"
+        _networkLogs.value = (listOf(newLog) + _networkLogs.value).take(15)
+    }
+
+    private fun updateMessageStatus(packetId: String, status: MessageStatus) {
+        _messages.value = _messages.value.map { 
+            if (it.packetId == packetId) it.copy(status = status) else it
+        }
+    }
+
+    private fun Packet.toUI() = MeshPacket(
+        packetId = this.packetId,
+        senderId = this.senderId,
+        destId = this.destId,
+        ttl = this.ttl,
+        payload = this.payload,
+        status = when (this.status) {
+            com.sudo.manet.protocol.DeliveryState.DELIVERED -> MessageStatus.DELIVERED
+            com.sudo.manet.protocol.DeliveryState.BUFFERED -> MessageStatus.BUFFERED
+            com.sudo.manet.protocol.DeliveryState.PENDING -> MessageStatus.PENDING
+            else -> MessageStatus.PENDING
+        },
+        hopCount = this.hopCount,
+        path = this.path
+    )
 }

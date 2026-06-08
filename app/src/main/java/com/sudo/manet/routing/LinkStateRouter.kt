@@ -4,6 +4,9 @@ import com.sudo.manet.protocol.BROADCAST_ADDRESS
 import com.sudo.manet.protocol.NodeId
 import com.sudo.manet.protocol.Packet
 import com.sudo.manet.protocol.PacketType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.PriorityQueue
 import java.util.concurrent.ConcurrentHashMap
 
@@ -12,14 +15,20 @@ class LinkStateRouter(
     private val transmit: (toNeighbor: NodeId, packet: Packet) -> Unit,
     private val getNeighbors: () -> List<NodeId>,
     private val onMessageReceived: (Packet) -> Unit,
+    private val initialSequence: Int = 1,
+    private val onSequenceUpdated: (Int) -> Unit = {},
     private val defaultTtl: Int = 8
 ) : Router {
 
     // Topology map: NodeId -> Set of its neighbors
     private val topology = ConcurrentHashMap<NodeId, Set<NodeId>>()
+    
+    private val _topologyFlow = MutableStateFlow<Map<NodeId, Set<NodeId>>>(emptyMap())
+    val topologyFlow: StateFlow<Map<NodeId, Set<NodeId>>> = _topologyFlow.asStateFlow()
+
     // Sequence numbers for LSAs to prevent processing old info
     private val lsaSequences = ConcurrentHashMap<NodeId, Int>()
-    private var localLsaSequence = 1
+    private var localLsaSequence = initialSequence
 
     override fun handlePacket(packet: Packet, fromNeighbor: NodeId): Boolean {
         return when (packet.type) {
@@ -51,6 +60,12 @@ class LinkStateRouter(
         broadcastLocalLinkState()
     }
 
+    fun clearTopology() {
+        topology.clear()
+        lsaSequences.clear()
+        _topologyFlow.value = emptyMap()
+    }
+
     /**
      * Periodically or on change, broadcast who our current neighbors are.
      * The payload is a comma-separated list of neighbor IDs.
@@ -58,6 +73,7 @@ class LinkStateRouter(
     fun broadcastLocalLinkState() {
         val neighbors = getNeighbors()
         localLsaSequence++
+        onSequenceUpdated(localLsaSequence)
         val lsa = Packet(
             type = PacketType.LSA,
             senderId = localId,
@@ -68,6 +84,7 @@ class LinkStateRouter(
         )
         // Update local topology view
         topology[localId] = neighbors.toSet()
+        _topologyFlow.value = topology.toMap()
         // Flood LSA
         neighbors.forEach { transmit(it, lsa) }
     }
@@ -76,11 +93,12 @@ class LinkStateRouter(
         val sender = packet.senderId
         val seq = packet.sequenceNumber
         
-        val lastSeq = lsaSequences[sender] ?: 0
-        if (seq > lastSeq) {
+        val lastSeq = lsaSequences[sender]
+        if (lastSeq == null || seq > lastSeq) {
             lsaSequences[sender] = seq
             val neighbors = packet.payload.split(",").filter { it.isNotEmpty() }.toSet()
             topology[sender] = neighbors
+            _topologyFlow.value = topology.toMap()
             
             // Relay LSA (flooding)
             val relayed = packet.withTtl(packet.ttl - 1)
@@ -100,7 +118,7 @@ class LinkStateRouter(
         
         val nextHop = calculateNextHop(packet.destId)
         if (nextHop != null && packet.ttl > 1) {
-            transmit(nextHop, packet.withTtl(packet.ttl - 1).withHop())
+            transmit(nextHop, packet.withTtl(packet.ttl - 1))
             return true
         }
         return false

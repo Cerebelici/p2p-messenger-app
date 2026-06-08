@@ -185,4 +185,25 @@ class MeshProtocolEngineTest {
         assertTrue((metrics["transmissions"] as Int) > 0)
         assertEquals(1, metrics["duplicates"])
     }
+
+    @Test
+    fun `topology updates when LSA is received`() {
+        neighbors.add("NODE_B")
+        
+        // Simulate an LSA from NODE_B saying its neighbors are NODE_A (us) and NODE_C
+        val lsa = Packet(
+            type = PacketType.LSA,
+            senderId = "NODE_B",
+            destId = BROADCAST_ADDRESS,
+            ttl = 4,
+            sequenceNumber = 1,
+            payload = "NODE_A,NODE_C"
+        )
+        
+        engine.receive(lsa, "NODE_B")
+        
+        val topo = engine.topology.value
+        assertTrue("Topology should contain NODE_B", topo.containsKey("NODE_B"))
+        assertEquals(setOf("NODE_A", "NODE_C"), topo["NODE_B"])
+    }
 }
